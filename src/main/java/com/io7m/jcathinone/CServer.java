@@ -90,6 +90,7 @@ public final class CServer
   {
     private final CServerQueueDirectory directory;
     private final CServer server;
+    private boolean failed;
 
     QueueTask(
       final CServer in_server,
@@ -97,6 +98,7 @@ public final class CServer
     {
       this.server = Objects.requireNonNull(in_server, "in_server");
       this.directory = Objects.requireNonNull(in_directory, "directory");
+      this.failed = false;
     }
 
     @Override
@@ -107,21 +109,29 @@ public final class CServer
         LOG.debug("task started for queue directory {}", this.directory.directory());
 
         try (CServerBrokerConnection connection = CServerBrokerConnection.create(this.directory)) {
-          final CServerDirectory dir =
-            new CServerDirectory(this.directory, path -> this.processLogging(connection, path));
+          try (CServerDirectory dir = new CServerDirectory(
+            this.directory, path -> this.processLogging(connection, path))) {
 
-          final Path path = this.directory.directory();
-          Files.list(path).forEach(file -> this.processLogging(connection, file));
+            final Path path = this.directory.directory();
+            Files.list(path).forEach(file -> this.processLogging(connection, file));
 
-          while (!this.server.done.get()) {
-            if (!dir.poll()) {
-              break;
+            while (!this.server.done.get()) {
+              if (this.failed) {
+                this.resubmitTask();
+                return;
+              }
+
+              if (!dir.poll()) {
+                break;
+              }
             }
           }
         }
       } catch (final Exception e) {
         LOG.error("error: ", e);
         this.resubmitTask();
+      } finally {
+        LOG.debug("task ended for queue directory {}", this.directory.directory());
       }
     }
 
@@ -138,6 +148,7 @@ public final class CServer
         process(connection, real);
       } catch (final Exception e) {
         LOG.error("error processing {}: ", real, e);
+        this.failed = true;
       }
     }
 

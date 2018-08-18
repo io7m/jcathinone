@@ -16,6 +16,7 @@
 
 package com.io7m.jcathinone;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.file.FileSystem;
 import java.nio.file.Path;
@@ -30,7 +31,7 @@ import java.util.function.Consumer;
  * A polled queue directory.
  */
 
-public final class CServerDirectory
+public final class CServerDirectory implements Closeable
 {
   private final CServerQueueDirectory directory;
   private final WatchService watcher;
@@ -89,5 +90,12 @@ public final class CServerDirectory
     }
 
     return key.reset();
+  }
+
+  @Override
+  public void close()
+    throws IOException
+  {
+    this.watcher.close();
   }
 }
