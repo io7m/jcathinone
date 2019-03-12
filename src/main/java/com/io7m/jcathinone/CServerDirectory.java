@@ -25,6 +25,7 @@ import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -71,9 +72,13 @@ public final class CServerDirectory implements Closeable
   {
     final WatchKey key;
     try {
-      key = this.watcher.take();
+      key = this.watcher.poll(1L, TimeUnit.SECONDS);
     } catch (final InterruptedException x) {
       Thread.currentThread().interrupt();
+      return true;
+    }
+
+    if (key == null) {
       return true;
     }
 

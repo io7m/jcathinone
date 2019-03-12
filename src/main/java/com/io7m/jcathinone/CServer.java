@@ -115,14 +115,29 @@ public final class CServer
             final Path path = this.directory.directory();
             Files.list(path).forEach(file -> this.processLogging(connection, file));
 
-            while (!this.server.done.get()) {
+            while (true) {
+              LOG.trace("tick");
+
+              if (this.server.done.get()) {
+                LOG.debug("server is done");
+                return;
+              }
+
+              if (!connection.isOpen()) {
+                LOG.debug("connection is closed");
+                this.resubmitTask();
+                return;
+              }
+
               if (this.failed) {
+                LOG.debug("task failed");
                 this.resubmitTask();
                 return;
               }
 
               if (!dir.poll()) {
-                break;
+                LOG.debug("directory poll is finished");
+                return;
               }
             }
           }

@@ -23,6 +23,9 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.api.core.client.SessionFailureListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -37,6 +40,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 public final class CServerBrokerConnection implements Closeable
 {
+  private static final Logger LOG = LoggerFactory.getLogger(CServerBrokerConnection.class);
+
   private final CServerQueueDirectory configuration;
   private final ServerLocator locator;
   private final ClientSessionFactory clients;
@@ -104,7 +109,69 @@ public final class CServerBrokerConnection implements Closeable
     final ClientProducer producer =
       session.createProducer(configuration.queueAddress());
 
-    return new CServerBrokerConnection(configuration, locator, clients, session, producer);
+    final CServerBrokerConnection connection =
+      new CServerBrokerConnection(configuration, locator, clients, session, producer);
+
+    session.addFailureListener(
+      new SessionFailureListener()
+      {
+        @Override
+        public void beforeReconnect(
+          final ActiveMQException exception)
+        {
+          LOG.debug("reconnect: ", exception);
+
+          try {
+            connection.close();
+          } catch (final IOException e) {
+            LOG.debug("connection close failed: ", exception);
+          }
+        }
+
+        @Override
+        public void connectionFailed(
+          final ActiveMQException exception,
+          final boolean failedOver)
+        {
+          LOG.debug("connection failed: ", exception);
+
+          try {
+            connection.close();
+          } catch (final IOException e) {
+            LOG.debug("connection close failed: ", exception);
+          }
+        }
+
+        @Override
+        public void connectionFailed(
+          final ActiveMQException exception,
+          final boolean failedOver,
+          final String scaleDownTargetNodeID)
+        {
+          try {
+            connection.close();
+          } catch (final IOException e) {
+            LOG.debug("connection close failed: ", exception);
+          }
+        }
+      });
+
+    return connection;
+  }
+
+  /**
+   * @return {@code true} if the connection is still open
+   */
+
+  public boolean isOpen()
+  {
+    if (this.session.isClosed()) {
+      return false;
+    }
+    if (this.producer.isClosed()) {
+      return false;
+    }
+    return !this.closed.get();
   }
 
   @Override
@@ -115,21 +182,50 @@ public final class CServerBrokerConnection implements Closeable
       IOException exception = null;
 
       try {
-        this.session.close();
-      } catch (final ActiveMQException e) {
+        LOG.trace("closing producer");
+        this.producer.close();
+      } catch (final Exception e) {
         exception = new IOException("Failed to close resources");
         exception.addSuppressed(e);
+      } finally {
+        LOG.trace("closed producer");
       }
+
       try {
-        this.producer.close();
-      } catch (final ActiveMQException e) {
+        LOG.trace("closing session");
+        this.session.close();
+      } catch (final Exception e) {
         if (exception == null) {
           exception = new IOException("Failed to close resources");
         }
         exception.addSuppressed(e);
+      } finally {
+        LOG.trace("closed session");
       }
-      this.clients.close();
-      this.locator.close();
+
+      try {
+        LOG.trace("closing client factory");
+        this.clients.close();
+      } catch (final Exception e) {
+        if (exception == null) {
+          exception = new IOException("Failed to close resources");
+        }
+        exception.addSuppressed(e);
+      } finally {
+        LOG.trace("closed client factory");
+      }
+
+      try {
+        LOG.trace("closing locator");
+        this.locator.close();
+      } catch (final Exception e) {
+        if (exception == null) {
+          exception = new IOException("Failed to close resources");
+        }
+        exception.addSuppressed(e);
+      } finally {
+        LOG.trace("closed locator");
+      }
 
       if (exception != null) {
         throw exception;
@@ -158,7 +254,16 @@ public final class CServerBrokerConnection implements Closeable
         });
 
       message.setTimestamp(System.currentTimeMillis());
-      message.writeBodyBufferBytes(cmessage.message().getBytes(UTF_8));
+      final byte[] bytes = cmessage.message().getBytes(UTF_8);
+      message.writeBodyBufferBytes(bytes);
+
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("sending {} octet message (expires {}, durable {})",
+                  Integer.valueOf(bytes.length),
+                  cmessage.expiry(),
+                  Boolean.valueOf(cmessage.durable()));
+      }
+
       this.producer.send(this.configuration.queueAddress(), message);
       this.session.commit();
     } catch (final ActiveMQException e) {
