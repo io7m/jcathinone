@@ -112,50 +112,7 @@ public final class CServerBrokerConnection implements Closeable
     final CServerBrokerConnection connection =
       new CServerBrokerConnection(configuration, locator, clients, session, producer);
 
-    session.addFailureListener(
-      new SessionFailureListener()
-      {
-        @Override
-        public void beforeReconnect(
-          final ActiveMQException exception)
-        {
-          LOG.debug("reconnect: ", exception);
-
-          try {
-            connection.close();
-          } catch (final IOException e) {
-            LOG.debug("connection close failed: ", exception);
-          }
-        }
-
-        @Override
-        public void connectionFailed(
-          final ActiveMQException exception,
-          final boolean failedOver)
-        {
-          LOG.debug("connection failed: ", exception);
-
-          try {
-            connection.close();
-          } catch (final IOException e) {
-            LOG.debug("connection close failed: ", exception);
-          }
-        }
-
-        @Override
-        public void connectionFailed(
-          final ActiveMQException exception,
-          final boolean failedOver,
-          final String scaleDownTargetNodeID)
-        {
-          try {
-            connection.close();
-          } catch (final IOException e) {
-            LOG.debug("connection close failed: ", exception);
-          }
-        }
-      });
-
+    session.addFailureListener(new CServerSessionFailureListener(connection));
     return connection;
   }
 
@@ -180,57 +137,84 @@ public final class CServerBrokerConnection implements Closeable
   {
     if (this.closed.compareAndSet(false, true)) {
       IOException exception = null;
-
-      try {
-        LOG.trace("closing producer");
-        this.producer.close();
-      } catch (final Exception e) {
-        exception = new IOException("Failed to close resources");
-        exception.addSuppressed(e);
-      } finally {
-        LOG.trace("closed producer");
-      }
-
-      try {
-        LOG.trace("closing session");
-        this.session.close();
-      } catch (final Exception e) {
-        if (exception == null) {
-          exception = new IOException("Failed to close resources");
-        }
-        exception.addSuppressed(e);
-      } finally {
-        LOG.trace("closed session");
-      }
-
-      try {
-        LOG.trace("closing client factory");
-        this.clients.close();
-      } catch (final Exception e) {
-        if (exception == null) {
-          exception = new IOException("Failed to close resources");
-        }
-        exception.addSuppressed(e);
-      } finally {
-        LOG.trace("closed client factory");
-      }
-
-      try {
-        LOG.trace("closing locator");
-        this.locator.close();
-      } catch (final Exception e) {
-        if (exception == null) {
-          exception = new IOException("Failed to close resources");
-        }
-        exception.addSuppressed(e);
-      } finally {
-        LOG.trace("closed locator");
-      }
-
+      exception = this.closeProducer(exception);
+      exception = this.closeSession(exception);
+      exception = this.closeClientFactory(exception);
+      exception = this.closeLocator(exception);
       if (exception != null) {
         throw exception;
       }
     }
+  }
+
+  private IOException closeLocator(
+    final IOException exception)
+  {
+    IOException ioException = exception;
+    try {
+      LOG.trace("closing locator");
+      this.locator.close();
+    } catch (final Exception e) {
+      if (ioException == null) {
+        ioException = new IOException("Failed to close resources");
+      }
+      ioException.addSuppressed(e);
+    } finally {
+      LOG.trace("closed locator");
+    }
+    return ioException;
+  }
+
+  private IOException closeClientFactory(
+    final IOException exception)
+  {
+    IOException ioException = exception;
+    try {
+      LOG.trace("closing client factory");
+      this.clients.close();
+    } catch (final Exception e) {
+      if (ioException == null) {
+        ioException = new IOException("Failed to close resources");
+      }
+      ioException.addSuppressed(e);
+    } finally {
+      LOG.trace("closed client factory");
+    }
+    return ioException;
+  }
+
+  private IOException closeSession(
+    final IOException exception)
+  {
+    IOException ioException = exception;
+    try {
+      LOG.trace("closing session");
+      this.session.close();
+    } catch (final Exception e) {
+      if (ioException == null) {
+        ioException = new IOException("Failed to close resources");
+      }
+      ioException.addSuppressed(e);
+    } finally {
+      LOG.trace("closed session");
+    }
+    return ioException;
+  }
+
+  private IOException closeProducer(
+    final IOException exception)
+  {
+    IOException ioException = exception;
+    try {
+      LOG.trace("closing producer");
+      this.producer.close();
+    } catch (final Exception e) {
+      ioException = new IOException("Failed to close resources");
+      ioException.addSuppressed(e);
+    } finally {
+      LOG.trace("closed producer");
+    }
+    return ioException;
   }
 
   /**
@@ -268,6 +252,59 @@ public final class CServerBrokerConnection implements Closeable
       this.session.commit();
     } catch (final ActiveMQException e) {
       throw new IOException(e);
+    }
+  }
+
+  private static class CServerSessionFailureListener
+    implements SessionFailureListener
+  {
+    private final CServerBrokerConnection connection;
+
+    CServerSessionFailureListener(
+      final CServerBrokerConnection inConnection)
+    {
+      this.connection =
+        Objects.requireNonNull(inConnection, "inConnection");
+    }
+
+    @Override
+    public void beforeReconnect(
+      final ActiveMQException exception)
+    {
+      LOG.debug("reconnect: ", exception);
+
+      try {
+        this.connection.close();
+      } catch (final IOException e) {
+        LOG.debug("connection close failed: ", exception);
+      }
+    }
+
+    @Override
+    public void connectionFailed(
+      final ActiveMQException exception,
+      final boolean failedOver)
+    {
+      LOG.debug("connection failed: ", exception);
+
+      try {
+        this.connection.close();
+      } catch (final IOException e) {
+        LOG.debug("connection close failed: ", exception);
+      }
+    }
+
+    @Override
+    public void connectionFailed(
+      final ActiveMQException exception,
+      final boolean failedOver,
+      final String scaleDownTargetNodeID)
+    {
+      try {
+        this.connection.close();
+      } catch (final IOException e) {
+        LOG.debug("connection close failed: ", exception);
+      }
     }
   }
 }
